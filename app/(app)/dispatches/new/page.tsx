@@ -93,7 +93,10 @@ export default function NewDispatchPage() {
       .eq("id", user.id)
       .single()
 
-    if (!profile?.org_id) return
+    if (!profile?.org_id) {
+      setLoading(false)
+      return
+    }
     setOrgId(profile.org_id)
 
     const [{ data: leadsData }, { data: svcs }] = await Promise.all([

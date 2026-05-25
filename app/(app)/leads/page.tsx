@@ -475,6 +475,8 @@ export default function LeadsPage() {
       if (profile?.org_id) {
         setOrgId(profile.org_id)
         fetchLeads(profile.org_id, q, 0)
+      } else {
+        setLoading(false)
       }
     }
     init()

@@ -21,6 +21,18 @@ body {
   box-sizing: border-box;
 }
 
+/* Cursor padrão para todos os elementos interativos */
+button,
+[role="button"],
+label[for],
+a {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
