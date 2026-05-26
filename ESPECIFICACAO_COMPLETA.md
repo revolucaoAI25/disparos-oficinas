@@ -3,6 +3,51 @@
 
 ---
 
+## CONTEXTO: O QUE É ESTE DOCUMENTO E POR QUE ELE EXISTE
+
+Este documento é a especificação técnica completa de um SaaS chamado **MecânicaFlow**, desenvolvido como MVP por um empreendedor do setor automotivo brasileiro.
+
+### A ideia de negócio
+
+O dono deste SaaS presta serviços para oficinas mecânicas e identificou uma dor recorrente: oficinas perdem clientes por falta de acompanhamento pós-atendimento. Um cliente troca o óleo, sai da oficina e nunca mais recebe contato. Seis meses depois, troca o óleo em outro lugar.
+
+A solução é simples: disparar mensagens para a base de clientes da oficina em momentos estratégicos — lembretes de revisão, promoções sazonais, reativação de clientes sumidos. O problema é que as oficinas não têm estrutura para fazer isso sozinhas.
+
+Por isso ele criou o **MecânicaFlow**: uma plataforma onde ele cadastra cada oficina como cliente, faz o setup inicial, e a oficina passa a ter uma ferramenta para gerenciar seus contatos e disparar mensagens automaticamente via WhatsApp (usando uma plataforma de disparo externa conectada por webhook).
+
+### Como o negócio funciona na prática
+
+1. O dono do SaaS (administrador) vende o serviço para uma oficina
+2. Ele acessa o painel de admin, cria a conta da oficina e entrega as credenciais de acesso
+3. A oficina faz login, importa sua base de clientes (planilha Excel/CSV com nome e telefone)
+4. Configura cadências automáticas — por exemplo: "todo cliente que veio fazer troca de óleo recebe uma mensagem de lembrete 6 meses depois"
+5. O sistema dispara as mensagens automaticamente nos dias certos, via webhook para a plataforma de WhatsApp
+6. A oficina acompanha quem recebeu, quem respondeu, quem voltou
+
+### O que é um "webhook" neste contexto
+
+A plataforma **não envia mensagens diretamente**. Ela funciona como um orquestrador: nos momentos certos, ela faz uma requisição HTTP (POST) para um endpoint externo — no caso atual, o **ChatFlux** — passando os dados do cliente (nome, telefone, campos extras). O ChatFlux então dispara a mensagem de WhatsApp de fato. Isso significa que a plataforma de disparo pode ser trocada a qualquer momento, bastando mudar a URL do webhook.
+
+### O que foi construído (MVP)
+
+Este é um MVP funcional completo, construído com tecnologias modernas e hospedado gratuitamente (Supabase + Vercel plano gratuito). Ele já está em funcionamento e foi testado com importação de planilhas reais. As funcionalidades incluem:
+
+- **Painel Admin** para gerenciar múltiplos clientes (oficinas)
+- **Importação de planilhas** com mapeamento de colunas e campos personalizados
+- **Cadências automáticas** com agendamento recorrente ou data específica
+- **Disparos avulsos** imediatos ou agendados
+- **Perfil individual de cada lead** com histórico de disparos e marcação de respostas
+- **Dashboard** com métricas de disparos e taxa de resposta
+- **Gerenciamento de serviços** por oficina
+
+### Para quem é este documento
+
+Este documento foi criado para que **qualquer IA generativa** (Claude, Lovable, GPT-4, Cursor, etc.) consiga recriar esta plataforma do zero, com todas as funcionalidades, a mesma stack tecnológica e o mesmo comportamento, sem precisar tomar nenhuma decisão de arquitetura — tudo já está definido aqui.
+
+Se você é uma IA lendo isto: siga as especificações à risca. Se você é um humano passando isto para uma IA: não precisa explicar nada além deste documento — ele contém tudo.
+
+---
+
 > **INSTRUÇÕES PARA A IA:** Leia este documento inteiro antes de escrever qualquer código. Siga cada especificação exatamente como descrita. Não omita nenhuma funcionalidade. Não use bibliotecas alternativas às listadas. Crie todos os arquivos na estrutura exata indicada.
 
 ---
