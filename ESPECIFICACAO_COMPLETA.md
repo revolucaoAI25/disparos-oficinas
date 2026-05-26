@@ -116,6 +116,8 @@ Se você é uma IA lendo isto: siga as especificações à risca. Se você é um
 - Use route groups: `(auth)` para login, `(app)` para área autenticada
 - Middleware de autenticação na raiz do projeto
 - Server Components para páginas que buscam dados, Client Components para interatividade
+- **REGRA CRÍTICA — Server Components NÃO podem ter event handlers:** Nunca adicione `onClick`, `onChange`, `onSubmit` ou qualquer handler diretamente em elementos JSX dentro de um Server Component. Isso causa crash silencioso na página ("This page couldn't load"). A solução é sempre extrair os botões interativos para um componente separado com `"use client"`. Formulários com `<form action={serverAction}>` são válidos em Server Components, mas adicionar `onClick` ao botão de submit dentro do form também quebra — extraia para client component.
+- **Padrão correto para ações em Server Components:** A página busca os dados (server), passa props para um `"use client"` component que contém todos os botões de ação. O componente client usa `fetch()` para chamar API routes e `router.refresh()` para re-renderizar os dados.
 
 ---
 
@@ -186,6 +188,9 @@ disparos-oficinas/
 │   │   ├── sidebar.tsx                     # Sidebar colapsável (client component)
 │   │   ├── page-header.tsx                 # Cabeçalho de página reutilizável
 │   │   └── stat-card.tsx                   # Card de estatística
+│   ├── cadences/
+│   │   ├── cadence-row-actions.tsx         # Ações da linha na tabela (client component)
+│   │   └── cadence-detail-actions.tsx      # Ações da página de detalhe (client component)
 │   └── ui/
 │       ├── button.tsx                      # Componente Button com CVA
 │       ├── input.tsx                       # Input estilizado
@@ -833,17 +838,19 @@ Clientes → /admin/clients (ícone: Building2)
   - Clicar: PATCH /api/dispatches/[id] com `{response_received: true}` + insere LeadActivity tipo 'response'
 
 ### 11.6 `/cadences` — Lista de Cadências
-**Tipo:** Server Component
+**Tipo:** Server Component (página) + Client Component para ações
 
 **Layout:**
 - PageHeader + botão "Nova Cadência" → /cadences/new
-- 4 chips de stats: Total, Ativas, Pausadas, Rascunhos
-- Tabela com colunas: Nome, Serviço, Status (badge colorido), Agendamento (texto descritivo), Ações
+- 5 chips de stats: Total, Ativas, Pausadas, Concluídas, Rascunhos (se houver)
+- Tabela com colunas: Nome, Serviço, Status (badge colorido), Agendamento, Disparos, Criado em, Ações
 
-**Ações por cadência:**
-- Ativar/Pausar (toggle status via Server Action ou API)
-- Editar → /cadences/[id]
-- Excluir (com confirmação)
+**Ações por cadência — componente `CadenceRowActions` (`"use client"`):**
+- **NUNCA** colocar onClick/confirm diretamente na página (Server Component) — cria crash
+- Ativar/Pausar: chama `PATCH /api/cadences/[id]` com `{ status: newStatus }` → `router.refresh()`
+- Editar: Link para `/cadences/[id]`
+- Excluir: `window.confirm()` → `DELETE /api/cadences/[id]` → `router.refresh()`
+- Cada botão tem loading state independente com spinner
 
 **Empty state** com CTA para criar primeira cadência
 
@@ -890,12 +897,19 @@ Clientes → /admin/clients (ícone: Building2)
 **Submit:** POST para `/api/cadences` → redireciona para `/cadences/[id]` da cadência criada
 
 ### 11.8 `/cadences/[id]` — Detalhe da Cadência
-**Tipo:** Server Component (com Server Actions para toggle/delete)
+**Tipo:** Server Component (dados) + Client Component para ações
+
+**ATENÇÃO:** NÃO use Server Actions com `onClick` aqui. Toda interatividade fica no componente `CadenceDetailActions` (`"use client"`).
 
 **Header:**
-- Nome da cadência + badge de status
-- Datas de criação/atualização
-- Botões: Ativar/Pausar, Editar, Excluir, "Disparar Agora" (processa todos os leads imediatamente)
+- Nome da cadência + badge de status + datas de criação/atualização
+- Banner amarelo de aviso quando status = "draft": "Esta cadência ainda não está ativa. Clique em Ativar para começar os disparos."
+- Botões de ação no componente `CadenceDetailActions`:
+  - **"Disparar Agora"**: visível quando ativo E há pendentes → `PATCH /api/cadences/[id]` com `{ fire_now: true }` → `router.refresh()`
+  - **"Editar"**: Link para `/cadences/[id]/edit`
+  - **Ativar/Pausar**: visível para status `draft`, `active` ou `paused` → `PATCH /api/cadences/[id]` com `{ status: newStatus }` → `router.refresh()`. draft→active, paused→active, active→paused
+  - **"Excluir"**: `window.confirm()` → `DELETE /api/cadences/[id]` → `router.push('/cadences')`
+  - Todos os botões têm loading state independente com spinner
 
 **Two columns:**
 - Esquerda: Card configurações (webhook URL mascarada, tipo agendamento, descrição do schedule, campos do payload)
@@ -1027,7 +1041,9 @@ Deleta o lead (atividades e disparos em cascata pelo banco)
 6. Retornar cadência criada com ID
 
 ### `PATCH /api/cadences/[id]`
-Atualiza campos da cadência (name, status, webhook_url, etc.)
+Atualiza campos da cadência. Campos aceitos: `name`, `status`, `webhook_url`, `webhook_body_template`, `schedule_type`, `schedule_config`, `target_filter`, `target_lead_ids`, `service_id`.
+
+**Campo especial `fire_now: true`:** Quando presente, ignora os outros campos e atualiza todos os dispatches desta cadência com status 'pending' ou 'scheduled' para `scheduled_at = now()` e `status = 'pending'`, fazendo-os serem processados imediatamente na próxima chamada ao cron (ou chamada manual). Retorna `{ success: true }` sem tocar na cadência em si.
 
 ### `DELETE /api/cadences/[id]`
 Deleta cadência (dispatches ficam com cadence_id null)
@@ -1200,21 +1216,33 @@ Marcar todas para: Production + Preview + Development
 
 ## 17. COMPORTAMENTOS CRÍTICOS A IMPLEMENTAR (NÃO ESQUECER)
 
-1. **Loading infinito em pages client:** Sempre que `profile.org_id` for null, chamar `setLoading(false)` e retornar — NUNCA deixar a página carregando eternamente. Isso acontece porque o admin não tem org_id.
+1. **NUNCA coloque event handlers em Server Components:** `onClick`, `onChange`, `onSubmit`, `confirm()` — tudo isso é inválido em Server Components no Next.js App Router. O erro resultante é um crash silencioso: "This page couldn't load". O bug é especialmente traiçoeiro porque pode não aparecer no estado vazio da página (ex: tabela sem linhas renderiza ok; com linhas, quebra por causa dos botões).
+   - **Padrão correto:** A página (Server Component) busca dados e passa props para um `"use client"` component que contém TODOS os botões de ação.
+   - O client component chama API routes via `fetch()` e usa `router.refresh()` para atualizar os dados server-side.
+   - Extraia os componentes de ação para arquivos separados: ex: `components/cadences/cadence-row-actions.tsx` e `components/cadences/cadence-detail-actions.tsx`.
 
-2. **Cursor pointer:** Adicionar `cursor: pointer` globalmente para `button`, `a`, `[role="button"]`, `label[for]`. Sem isso os botões parecem não-clicáveis.
+2. **Loading infinito em pages client:** Sempre que `profile.org_id` for null, chamar `setLoading(false)` e retornar — NUNCA deixar a página carregando eternamente. Isso acontece porque o admin não tem org_id. Padrão:
+   ```typescript
+   if (!profile?.org_id) { setLoading(false); return }
+   ```
 
-3. **Import de planilha sem constraint UNIQUE:** A importação NÃO usa `upsert` com `onConflict`. Em vez disso: busca telefones existentes → insert novos → update existentes manualmente.
+3. **Cursor pointer:** Adicionar `cursor: pointer` globalmente para `button`, `a`, `[role="button"]`, `label[for]`. Sem isso os botões parecem não-clicáveis (browsers não aplicam por padrão). Incluir também `cursor-pointer` nas classes base do componente Button (CVA).
 
-4. **Webhook payload pré-calculado:** O payload final (com variáveis substituídas) é calculado na hora da criação do dispatch e salvo na coluna `payload`. O cron usa o `payload` salvo, não recalcula.
+4. **Import de planilha sem constraint UNIQUE:** A importação NÃO usa `upsert` com `onConflict`. O schema não tem constraint UNIQUE em `(phone, org_id)`. Em vez disso: busca telefones existentes → insert novos → update existentes manualmente.
 
-5. **Admin sem org:** O usuário admin não tem `org_id`. Ele só usa `/admin` e `/admin/clients`. Se acessar `/leads`, `/dispatches`, etc., deve ver estado vazio (não travado).
+5. **Webhook payload pré-calculado:** O payload final (com variáveis substituídas) é calculado na hora da criação do dispatch e salvo na coluna `payload`. O cron usa o `payload` salvo, não recalcula.
 
-6. **Disparo imediato vs agendado:**
+6. **Admin sem org:** O usuário admin não tem `org_id`. Ele só usa `/admin` e `/admin/clients`. Se acessar `/leads`, `/dispatches`, etc., deve ver estado vazio (não travado).
+
+7. **Botão Ativar disponível para status draft:** O toggle de status deve aparecer para `status === 'draft'` também (não só `active`/`paused`). draft → active, paused → active, active → paused.
+
+8. **Banner de aviso para rascunhos:** Na página de detalhe de cadência com status 'draft', exibir um banner informativo explicando que a cadência precisa ser ativada para começar os disparos.
+
+9. **Disparo imediato vs agendado:**
    - Status 'pending' = enviar AGORA (processado dentro da API route `/api/dispatches`)
    - Status 'scheduled' = enviar na data futura (processado pelo cron job)
 
-7. **Autenticação do cron:** O endpoint `/api/cron/process-dispatches` verifica `Authorization: Bearer {CRON_SECRET}`. Sem esse header, retorna 401. O Vercel envia esse header automaticamente se configurado — ou use serviço externo como cron-job.org com o header manual.
+10. **Autenticação do cron:** O endpoint `/api/cron/process-dispatches` verifica `Authorization: Bearer {CRON_SECRET}`. Sem esse header, retorna 401. O Vercel envia esse header automaticamente se configurado — ou use serviço externo como cron-job.org com o header manual.
 
 ---
 
