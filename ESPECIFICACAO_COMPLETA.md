@@ -1036,9 +1036,11 @@ Deleta o lead (atividades e disparos em cascata pelo banco)
    - `target_lead_ids` fornecidos → usar esses
    - `target_filter` fornecido → query com filtros dinâmicos
    - Nenhum → todos os leads da org
-4. Calcular `scheduled_at` baseado em `schedule_config`
-5. Criar registros de `dispatches` para cada lead com payload pré-calculado (`buildWebhookPayload`)
-6. Retornar cadência criada com ID
+4. **CRÍTICO:** Ao buscar leads, SEMPRE incluir `custom_fields` na query: `.select("id, phone, name, custom_fields")`. Sem isso, variáveis como `{{modelo_carro}}` chegam em branco no webhook.
+5. Calcular `scheduled_at` baseado em `schedule_config`
+6. Para cada lead, criar o payload usando `buildWebhookPayload(template, { name, phone, custom_fields })` — NUNCA fazer interpolação manual inline
+7. Criar registros de `dispatches` com status `'scheduled'` em lotes de 500
+8. Retornar cadência criada com ID
 
 ### `PATCH /api/cadences/[id]`
 Atualiza campos da cadência. Campos aceitos: `name`, `status`, `webhook_url`, `webhook_body_template`, `schedule_type`, `schedule_config`, `target_filter`, `target_lead_ids`, `service_id`.
@@ -1050,10 +1052,18 @@ Deleta cadência (dispatches ficam com cadence_id null)
 
 ### `POST /api/dispatches`
 1. Validar auth + org_id
-2. Buscar leads alvo (todos ou ids específicos)
+2. Buscar leads alvo incluindo `custom_fields`: `.select("id, name, phone, custom_fields")`
 3. Para cada lead: `buildWebhookPayload(template, lead)` → payload final
 4. Criar registros de dispatches com status 'pending' (agora) ou 'scheduled'
-5. Se 'pending': enviar webhooks imediatamente via `fetch(webhook_url, {method: POST, body: JSON.stringify(payload)})`
+5. Se 'pending': enviar webhooks imediatamente com **timeout obrigatório de 10s**:
+   ```typescript
+   fetch(webhook_url, {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+     body: JSON.stringify(payload),
+     signal: AbortSignal.timeout(10000), // OBRIGATÓRIO — evita request travado
+   })
+   ```
 6. Atualizar status para 'sent' ou 'failed' baseado no response
 7. Atualizar `last_contact_date` dos leads enviados
 
@@ -1073,10 +1083,23 @@ Rollback da org se criação do usuário falhar.
 
 ### `GET /api/cron/process-dispatches`
 1. Verificar `Authorization: Bearer {CRON_SECRET}`
-2. Buscar dispatches com status='scheduled' e scheduled_at <= now() (máx 100)
-3. Buscar dispatches com status='pending' (máx 100)
-4. Para cada um: enviar webhook, atualizar status para 'sent'/'failed', atualizar `last_contact_date`
+2. Buscar dispatches com status='scheduled' e scheduled_at <= now() (máx 100), com join em `leads(name, phone, custom_fields)`
+3. Buscar dispatches com status='pending' (máx 100), com mesmo join
+4. Para cada dispatch:
+   a. Usar o `dispatch.payload` já armazenado (pré-calculado na criação) — NÃO recalcular
+   b. Enviar webhook com **timeout de 10s**: `signal: AbortSignal.timeout(10000)`
+   c. Atualizar status para 'sent'/'failed' e `sent_at`
+   d. Se enviado com sucesso: atualizar `last_contact_date` do lead
+   e. **CRÍTICO — Cadências recorrentes:** Se o dispatch pertence a uma cadência (`cadence_id` não nulo):
+      - Buscar a cadência: `schedule_type`, `schedule_config`, `status`
+      - Se `schedule_type === 'recurring'` E `status === 'active'`:
+        - Calcular `next_scheduled_at = dispatch.scheduled_at + interval_months`
+        - Verificar se `next_scheduled_at <= end_date` (ou se não há end_date)
+        - Verificar se já não existe dispatch futuro para este cadence_id + lead_id (evitar duplicata)
+        - Se tudo ok: criar novo dispatch com mesmo `payload`, `webhook_url`, `lead_id`, novo `scheduled_at`, status `'scheduled'`
 5. Retornar `{ processed, failed, total }`
+
+**Sem este passo (e), cadências recorrentes disparam apenas uma vez — o agendamento "a cada 3 meses" nunca se repetiria.**
 
 ---
 
@@ -1243,6 +1266,24 @@ Marcar todas para: Production + Preview + Development
    - Status 'scheduled' = enviar na data futura (processado pelo cron job)
 
 10. **Autenticação do cron:** O endpoint `/api/cron/process-dispatches` verifica `Authorization: Bearer {CRON_SECRET}`. Sem esse header, retorna 401. O Vercel envia esse header automaticamente se configurado — ou use serviço externo como cron-job.org com o header manual.
+
+11. **SEMPRE incluir `custom_fields` ao buscar leads para disparos:** Em qualquer query de leads que alimente um payload de webhook, use `.select("id, name, phone, custom_fields")`. Omitir `custom_fields` faz variáveis como `{{modelo_carro}}` ou `{{placa}}` chegarem em branco no webhook, silenciosamente.
+
+12. **SEMPRE usar `buildWebhookPayload` para montar payloads — nunca interpolação manual:** A função em `lib/utils.ts` resolve `{{nome}}`, `{{telefone}}` e todos os `custom_fields` corretamente. Implementar isso inline cria bugs e divergências. Assinatura:
+    ```typescript
+    buildWebhookPayload(
+      template: Record<string, string>,
+      lead: { name?: string | null; phone: string; custom_fields?: Record<string, string> }
+    ): Record<string, string>
+    ```
+
+13. **Cadências recorrentes PRECISAM de auto-reagendamento no cron:** Ao criar a cadência, apenas o primeiro dispatch é gerado (para `start_date`). Após o cron enviar esse dispatch com sucesso, ele DEVE criar o próximo — senão a cadência só dispara uma vez, nunca se repete. Veja a lógica completa na seção `GET /api/cron/process-dispatches` acima.
+
+14. **Sempre adicionar timeout de 10s em chamadas fetch para webhooks externos:**
+    ```typescript
+    signal: AbortSignal.timeout(10000)
+    ```
+    Sem isso, um webhook externo lento ou travado pode deixar a API do Vercel sem resposta até o timeout padrão (30s), bloqueando outros usuários.
 
 ---
 
