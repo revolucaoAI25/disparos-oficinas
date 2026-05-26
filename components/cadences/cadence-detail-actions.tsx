@@ -39,6 +39,7 @@ export function CadenceDetailActions({
   async function handleToggle() {
     setLoadingToggle(true)
     const newStatus: CadenceStatus = status === "active" ? "paused" : "active"
+    // draft → active, paused → active, active → paused
     await fetch(`/api/cadences/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -88,7 +89,7 @@ export function CadenceDetailActions({
       </Link>
 
       {/* Toggle status */}
-      {(status === "active" || status === "paused") && (
+      {(status === "active" || status === "paused" || status === "draft") && (
         <Button
           variant={status === "active" ? "outline" : "success"}
           size="sm"
