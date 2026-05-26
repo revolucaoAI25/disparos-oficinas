@@ -6,54 +6,16 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { getStatusColor, getStatusLabel, formatDateTime } from "@/lib/utils"
-import { Cadence, CadenceStatus } from "@/types"
+import { Cadence } from "@/types"
+import { CadenceRowActions } from "@/components/cadences/cadence-row-actions"
 import {
   Zap,
   Plus,
-  Pencil,
-  Trash2,
-  Play,
-  Pause,
   ChevronRight,
   Calendar,
   RefreshCw,
   Users,
 } from "lucide-react"
-import { revalidatePath } from "next/cache"
-
-// ─── Server Actions ────────────────────────────────────────────────────────────
-
-async function toggleCadenceStatus(formData: FormData) {
-  "use server"
-  const id = formData.get("id") as string
-  const currentStatus = formData.get("status") as CadenceStatus
-  const newStatus: CadenceStatus = currentStatus === "active" ? "paused" : "active"
-
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return
-
-  await supabase
-    .from("cadences")
-    .update({ status: newStatus })
-    .eq("id", id)
-
-  revalidatePath("/cadences")
-}
-
-async function deleteCadence(formData: FormData) {
-  "use server"
-  const id = formData.get("id") as string
-
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return
-
-  await supabase.from("cadences").delete().eq("id", id)
-  revalidatePath("/cadences")
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function CadencesPage() {
   const supabase = await createClient()
@@ -158,7 +120,7 @@ export default async function CadencesPage() {
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Agendamento</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Disparos</th>
                   <th className="px-4 py-3 text-left font-semibold text-slate-600">Criado em</th>
-                  <th className="px-4 py-3 text-right font-semibold text-slate-600 w-40">Ações</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-600 w-36">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -191,7 +153,8 @@ export default async function CadencesPage() {
                             Recorrente
                             {cadence.schedule_config?.interval_months && (
                               <span className="text-slate-400">
-                                · a cada {cadence.schedule_config.interval_months} {cadence.schedule_config.interval_months === 1 ? "mês" : "meses"}
+                                · a cada {cadence.schedule_config.interval_months}{" "}
+                                {cadence.schedule_config.interval_months === 1 ? "mês" : "meses"}
                               </span>
                             )}
                           </>
@@ -201,7 +164,9 @@ export default async function CadencesPage() {
                             Uma vez
                             {cadence.schedule_config?.date && (
                               <span className="text-slate-400">
-                                · {formatDateTime(`${cadence.schedule_config.date}T${cadence.schedule_config.time ?? "00:00"}`)}
+                                · {formatDateTime(
+                                  `${cadence.schedule_config.date}T${cadence.schedule_config.time ?? "00:00"}`
+                                )}
                               </span>
                             )}
                           </>
@@ -218,57 +183,11 @@ export default async function CadencesPage() {
                       {formatDateTime(cadence.created_at)}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        {/* Toggle active/paused */}
-                        {(cadence.status === "active" || cadence.status === "paused") && (
-                          <form action={toggleCadenceStatus}>
-                            <input type="hidden" name="id" value={cadence.id} />
-                            <input type="hidden" name="status" value={cadence.status} />
-                            <Button
-                              type="submit"
-                              variant="ghost"
-                              size="sm"
-                              title={cadence.status === "active" ? "Pausar" : "Ativar"}
-                              className="text-slate-400 hover:text-slate-700"
-                            >
-                              {cadence.status === "active" ? (
-                                <Pause className="w-3.5 h-3.5" />
-                              ) : (
-                                <Play className="w-3.5 h-3.5" />
-                              )}
-                            </Button>
-                          </form>
-                        )}
-
-                        <Link href={`/cadences/${cadence.id}/edit`}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="Editar"
-                            className="text-slate-400 hover:text-slate-700"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                        </Link>
-
-                        <form action={deleteCadence}>
-                          <input type="hidden" name="id" value={cadence.id} />
-                          <Button
-                            type="submit"
-                            variant="ghost"
-                            size="sm"
-                            title="Excluir"
-                            className="text-slate-400 hover:text-red-500"
-                            onClick={(e) => {
-                              if (!confirm(`Excluir a cadência "${cadence.name}"? Esta ação não pode ser desfeita.`)) {
-                                e.preventDefault()
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </form>
-                      </div>
+                      <CadenceRowActions
+                        id={cadence.id}
+                        name={cadence.name}
+                        status={cadence.status}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -296,3 +215,4 @@ function StatChip({
     </span>
   )
 }
+
