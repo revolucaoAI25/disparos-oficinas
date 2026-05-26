@@ -59,7 +59,19 @@ export async function PATCH(
       target_filter,
       target_lead_ids,
       service_id,
+      fire_now,
     } = body
+
+    // Handle fire_now — mark all pending/scheduled dispatches as ready to send immediately
+    if (fire_now === true) {
+      await supabase
+        .from("dispatches")
+        .update({ scheduled_at: new Date().toISOString(), status: "pending" })
+        .eq("cadence_id", id)
+        .in("status", ["scheduled", "pending"])
+
+      return NextResponse.json({ success: true })
+    }
 
     // Build update patch — only include defined fields
     const patch: Record<string, unknown> = {

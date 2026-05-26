@@ -3,16 +3,11 @@ import { notFound, redirect } from "next/navigation"
 import Link from "next/link"
 import { PageHeader } from "@/components/layout/page-header"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { getStatusColor, getStatusLabel, formatDateTime } from "@/lib/utils"
-import { Cadence, CadenceStatus, Dispatch } from "@/types"
+import { CadenceDetailActions } from "@/components/cadences/cadence-detail-actions"
 import {
-  Pencil,
-  Trash2,
-  Play,
-  Pause,
   Zap,
   Calendar,
   RefreshCw,
@@ -25,60 +20,6 @@ import {
   TrendingUp,
   ChevronLeft,
 } from "lucide-react"
-import { revalidatePath } from "next/cache"
-
-// ─── Server Actions ────────────────────────────────────────────────────────────
-
-async function toggleStatus(formData: FormData) {
-  "use server"
-  const id = formData.get("id") as string
-  const currentStatus = formData.get("status") as CadenceStatus
-  const newStatus: CadenceStatus = currentStatus === "active" ? "paused" : "active"
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return
-
-  await supabase.from("cadences").update({ status: newStatus }).eq("id", id)
-  revalidatePath(`/cadences/${id}`)
-  revalidatePath("/cadences")
-}
-
-async function deleteCadenceAction(formData: FormData) {
-  "use server"
-  const id = formData.get("id") as string
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return
-
-  await supabase.from("cadences").delete().eq("id", id)
-  redirect("/cadences")
-}
-
-async function fireNowAction(formData: FormData) {
-  "use server"
-  const cadenceId = formData.get("cadence_id") as string
-
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return
-
-  // Mark all pending/scheduled dispatches for this cadence as ready to send now
-  await supabase
-    .from("dispatches")
-    .update({ scheduled_at: new Date().toISOString(), status: "pending" })
-    .eq("cadence_id", cadenceId)
-    .in("status", ["scheduled", "pending"])
-
-  revalidatePath(`/cadences/${cadenceId}`)
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -195,79 +136,12 @@ export default async function CadenceDetailPage({
             : undefined
         }
       >
-        <div className="flex items-center gap-2">
-          {/* Fire now */}
-          {cadence.status === "active" && pendingDispatches > 0 && (
-            <form action={fireNowAction}>
-              <input type="hidden" name="cadence_id" value={cadence.id} />
-              <Button type="submit" variant="outline" size="sm">
-                <Zap className="w-3.5 h-3.5" />
-                Disparar Agora
-                {pendingDispatches > 0 && (
-                  <span className="ml-1 bg-amber-100 text-amber-700 rounded-full px-1.5 text-xs font-semibold">
-                    {pendingDispatches}
-                  </span>
-                )}
-              </Button>
-            </form>
-          )}
-
-          {/* Edit */}
-          <Link href={`/cadences/${id}/edit`}>
-            <Button variant="outline" size="sm">
-              <Pencil className="w-3.5 h-3.5" />
-              Editar
-            </Button>
-          </Link>
-
-          {/* Toggle status */}
-          {(cadence.status === "active" || cadence.status === "paused") && (
-            <form action={toggleStatus}>
-              <input type="hidden" name="id" value={cadence.id} />
-              <input type="hidden" name="status" value={cadence.status} />
-              <Button
-                type="submit"
-                variant={cadence.status === "active" ? "outline" : "success"}
-                size="sm"
-              >
-                {cadence.status === "active" ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5" />
-                    Pausar
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5" />
-                    Ativar
-                  </>
-                )}
-              </Button>
-            </form>
-          )}
-
-          {/* Delete */}
-          <form action={deleteCadenceAction}>
-            <input type="hidden" name="id" value={cadence.id} />
-            <Button
-              type="submit"
-              variant="outline"
-              size="sm"
-              className="text-red-500 border-red-200 hover:bg-red-50"
-              onClick={(e) => {
-                if (
-                  !confirm(
-                    `Excluir a cadência "${cadence.name}"? Esta ação é irreversível.`
-                  )
-                ) {
-                  e.preventDefault()
-                }
-              }}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Excluir
-            </Button>
-          </form>
-        </div>
+        <CadenceDetailActions
+          id={cadence.id}
+          name={cadence.name}
+          status={cadence.status}
+          pendingDispatches={pendingDispatches}
+        />
       </PageHeader>
 
       {/* Status badge */}
@@ -287,6 +161,14 @@ export default async function CadenceDetailPage({
           </span>
         )}
       </div>
+
+      {/* Draft notice */}
+      {cadence.status === "draft" && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>Rascunho:</strong> Esta cadência ainda não está ativa. Clique em{" "}
+          <strong>Ativar</strong> no canto superior direito para começar os disparos.
+        </div>
+      )}
 
       {/* Two columns */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
