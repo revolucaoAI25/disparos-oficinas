@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextRequest, NextResponse } from "next/server"
 import { ScheduleType } from "@/types"
+import { buildWebhookPayload } from "@/lib/utils"
 
 interface FilterRule {
   field: string
@@ -175,13 +176,13 @@ export async function POST(req: NextRequest) {
       schedule_config
     )
 
-    let leadsToDispatch: { id: string; phone: string; name: string | null }[] = []
+    let leadsToDispatch: { id: string; phone: string; name: string | null; custom_fields: Record<string, string> }[] = []
 
     if (Array.isArray(target_lead_ids) && target_lead_ids.length > 0) {
       // Explicit lead IDs
       const { data: leads } = await supabase
         .from("leads")
-        .select("id, phone, name")
+        .select("id, phone, name, custom_fields")
         .eq("org_id", orgId)
         .in("id", target_lead_ids)
 
@@ -194,7 +195,7 @@ export async function POST(req: NextRequest) {
       // Build filter query
       let query = supabase
         .from("leads")
-        .select("id, phone, name")
+        .select("id, phone, name, custom_fields")
         .eq("org_id", orgId)
 
       for (const rule of (target_filter as TargetFilter).rules!) {
@@ -226,7 +227,7 @@ export async function POST(req: NextRequest) {
       // All leads
       const { data: leads } = await supabase
         .from("leads")
-        .select("id, phone, name")
+        .select("id, phone, name, custom_fields")
         .eq("org_id", orgId)
 
       leadsToDispatch = leads ?? []
@@ -239,21 +240,15 @@ export async function POST(req: NextRequest) {
         const batch = leadsToDispatch.slice(i, i + BATCH_SIZE)
 
         const dispatches = batch.map((lead) => {
-          // Build payload for this lead
-          const payload: Record<string, string> = {}
-          const template = (webhook_body_template ?? {}) as Record<string, string>
-          for (const [k, v] of Object.entries(template)) {
-            const filled = (v as string).replace(/\{\{(\w+)\}\}/g, (_, varName) => {
-              const data: Record<string, string> = {
-                nome: lead.name ?? "",
-                name: lead.name ?? "",
-                telefone: lead.phone,
-                phone: lead.phone,
-              }
-              return data[varName] ?? ""
-            })
-            payload[k] = filled
-          }
+          // Build payload with all lead fields (including custom_fields)
+          const payload = buildWebhookPayload(
+            (webhook_body_template ?? {}) as Record<string, string>,
+            {
+              name: lead.name,
+              phone: lead.phone,
+              custom_fields: (lead.custom_fields ?? {}) as Record<string, string>,
+            }
+          )
 
           return {
             org_id: orgId,
